@@ -34,6 +34,7 @@ type Release struct {
 	Description string
 	Assets      []*Asset
 	Commit      string
+	Tag         string
 }
 
 type Asset struct {
@@ -148,4 +149,29 @@ func (c *Client) uploadReleaseAsset(ctx context.Context, releaseID int64, filena
 	})
 
 	return nil
+}
+
+// GetReleases queries the GitHub API for a full list of releases
+func (c *Client) GetReleases(ctx context.Context) ([]*Release, error) {
+
+	releases, _, err := c.Repositories.ListReleases(ctx, c.owner, c.repo, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []*Release
+
+	for _, release := range releases {
+		r := &Release{
+			Name:   *release.Name,
+			Tag:    *release.TagName,
+			Assets: []*Asset{},
+		}
+		for _, ass := range release.Assets {
+			asset := &Asset{*ass.Name, *ass.BrowserDownloadURL}
+			r.Assets = append(r.Assets, asset)
+		}
+		result = append(result, r)
+	}
+	return result, nil
 }

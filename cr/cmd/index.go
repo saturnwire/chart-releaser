@@ -56,4 +56,5 @@ func init() {
 	flags.StringP("token", "t", "", "GitHub Auth Token (only needed for private repos)")
 	flags.StringP("git-base-url", "b", "https://api.github.com/", "GitHub Base URL (only needed for private GitHub)")
 	flags.StringP("git-upload-url", "u", "https://uploads.github.com/", "GitHub Upload URL (only needed for private GitHub)")
+	flags.BoolP("remote", "", false, "Uses the Github API to find releases (downloads to the --package-path)")
 }

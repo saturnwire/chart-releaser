@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -41,6 +42,7 @@ import (
 type GitHub interface {
 	CreateRelease(ctx context.Context, input *github.Release) error
 	GetRelease(ctx context.Context, tag string) (*github.Release, error)
+	GetReleases(ctx context.Context) ([]*github.Release, error)
 }
 
 type HttpClient interface {
@@ -113,34 +115,40 @@ func (r *Releaser) UpdateIndexFile() (bool, error) {
 		indexFile = repo.NewIndexFile()
 	}
 
-	chartPackages, err := ioutil.ReadDir(r.config.PackagePath)
-	if err != nil {
-		return false, err
-	}
-
 	var update bool
-	for _, chartPackage := range chartPackages {
-		tag := strings.TrimSuffix(chartPackage.Name(), filepath.Ext(chartPackage.Name()))
-
-		release, err := r.github.GetRelease(context.TODO(), tag)
+	if r.config.Remote {
+		fmt.Printf("====> Fetching remote releases\n")
+		releases, err := r.github.GetReleases(context.TODO())
 		if err != nil {
 			return false, err
 		}
 
-		for _, asset := range release.Assets {
-			downloadUrl, _ := url.Parse(asset.URL)
-			name := filepath.Base(downloadUrl.Path)
-			baseName := strings.TrimSuffix(name, filepath.Ext(name))
-			tagParts := r.splitPackageNameAndVersion(baseName)
-			packageName, packageVersion := tagParts[0], tagParts[1]
-			fmt.Printf("====> Found %s-%s.tgz\n", packageName, packageVersion)
-			if _, err := indexFile.Get(packageName, packageVersion); err != nil {
-				if err := r.addToIndexFile(indexFile, downloadUrl.String()); err != nil {
-					return false, err
-				}
-				update = true
-				break
+		for _, release := range releases {
+			indexUpdated, err := r.processAssets(release.Assets, indexFile, true)
+			if err != nil {
+				return false, err
 			}
+			update = indexUpdated || update
+		}
+	} else {
+		chartPackages, err := ioutil.ReadDir(r.config.PackagePath)
+		if err != nil {
+			return false, err
+		}
+
+		for _, chartPackage := range chartPackages {
+			tag := strings.TrimSuffix(chartPackage.Name(), filepath.Ext(chartPackage.Name()))
+
+			release, err := r.github.GetRelease(context.TODO(), tag)
+			if err != nil {
+				return false, err
+			}
+
+			indexUpdated, err := r.processAssets(release.Assets, indexFile, false)
+			if err != nil {
+				return false, err
+			}
+			update = indexUpdated || update
 		}
 	}
 
@@ -153,6 +161,35 @@ func (r *Releaser) UpdateIndexFile() (bool, error) {
 	}
 
 	return false, nil
+}
+
+func (r *Releaser) processAssets(assets []*github.Asset, indexFile *repo.IndexFile, remote bool) (bool, error) {
+	var update bool
+	var err error
+	for _, asset := range assets {
+		downloadUrl, _ := url.Parse(asset.URL)
+		name := filepath.Base(downloadUrl.Path)
+		baseName := strings.TrimSuffix(name, filepath.Ext(name))
+		tagParts := r.splitPackageNameAndVersion(baseName)
+		packageName, packageVersion := tagParts[0], tagParts[1]
+		fmt.Printf("====> Found %s-%s.tgz\n", packageName, packageVersion)
+		if !indexFile.Has(packageName, packageVersion) {
+			if remote {
+				fmt.Printf("====> Downloading %s-%s.tgz \n", packageName, packageVersion)
+				err = r.downloadFile(path.Join(r.config.PackagePath, name), downloadUrl.String())
+				if err != nil {
+					return false, err
+				}
+			}
+			if err := r.addToIndexFile(indexFile, downloadUrl.String()); err != nil {
+				return false, err
+			}
+			update = true
+			break
+		}
+	}
+
+	return update, nil
 }
 
 func (r *Releaser) splitPackageNameAndVersion(pkg string) []string {
@@ -229,4 +266,25 @@ func (r *Releaser) CreateReleases() error {
 
 func (r *Releaser) getListOfPackages(dir string) ([]string, error) {
 	return filepath.Glob(filepath.Join(dir, "*.tgz"))
+}
+
+func (r *Releaser) downloadFile(filepath string, url string) error {
+
+	// Get the data
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Create the file
+	out, err := os.Create(filepath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	// Write the body to file
+	_, err = io.Copy(out, resp.Body)
+	return err
 }

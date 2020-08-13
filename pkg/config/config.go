@@ -47,6 +47,7 @@ type Options struct {
 	GitBaseURL   string `mapstructure:"git-base-url"`
 	GitUploadURL string `mapstructure:"git-upload-url"`
 	Commit       string `mapstructure:"commit"`
+	Remote       bool   `mapstructure:"remote"`
 }
 
 func LoadConfiguration(cfgFile string, cmd *cobra.Command, requiredFlags []string) (*Options, error) {
